@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Български рекорди по стрелба с лък</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- SheetJS — reads merged-cell division labels from the XLSX export -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.mini.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body>
+<div class="abr-app" x-data="archerApp()" x-init="init()">
+
+  <header class="abr-header">
+    <div class="abr-header-left">
+      <div class="abr-title">
+        <span x-text="t.title"></span>
+      </div>
+    </div>
+    <div class="abr-lang">
+      <button :class="{ active: lang === 'bg' }" @click="lang = 'bg'">БГ</button>
+      <button :class="{ active: lang === 'en' }" @click="lang = 'en'">EN</button>
+    </div>
+  </header>
+
+  <div class="abr-filters" x-show="!loading && !error">
+
+    <!-- season + category + division (hidden when no division data) -->
+    <div class="abr-filter-row" x-show="hasDivisions">
+      <div class="abr-filter-group is-select" :class="{ 'has-value': f.season }">
+        <label x-text="t.season"></label>
+        <select x-model="f.season">
+          <option value="" x-text="t.allSeasons"></option>
+          <template x-for="opt in seasonOptions" :key="opt">
+            <option :value="opt" x-text="opt"></option>
+          </template>
+        </select>
+        <button class="abr-clear-btn" x-show="f.season" @click.stop="clearFilter('season')" title="Clear">✕</button>
+      </div>
+
+      <div class="abr-filter-group is-select" :class="{ 'has-value': f.category }">
+        <label x-text="t.category"></label>
+        <select x-model="f.category">
+          <option value="" x-text="t.allCategories"></option>
+          <template x-for="opt in categoryOptions" :key="opt">
+            <option :value="opt" x-text="opt"></option>
+          </template>
+        </select>
+        <button class="abr-clear-btn" x-show="f.category" @click.stop="clearFilter('category')" title="Clear">✕</button>
+      </div>
+
+      <div class="abr-filter-group is-select" :class="{ 'has-value': f.divisionPart }">
+        <label x-text="t.division"></label>
+        <select x-model="f.divisionPart">
+          <option value="" x-text="t.allDivisions"></option>
+          <template x-for="opt in divisionPartOptions" :key="opt">
+            <option :value="opt" x-text="opt"></option>
+          </template>
+        </select>
+        <button class="abr-clear-btn" x-show="f.divisionPart" @click.stop="clearFilter('divisionPart')" title="Clear">✕</button>
+      </div>
+    </div>
+
+    <!-- record type + archer + club -->
+    <div class="abr-filter-row">
+      <div class="abr-filter-group is-select" :class="{ 'has-value': f.recordType }">
+        <label x-text="t.recordType"></label>
+        <select x-model="f.recordType">
+          <option value="" x-text="t.allTypes"></option>
+          <template x-for="opt in recordTypeOptions" :key="opt">
+            <option :value="opt" x-text="opt"></option>
+          </template>
+        </select>
+        <button class="abr-clear-btn" x-show="f.recordType" @click.stop="clearFilter('recordType')" title="Clear">✕</button>
+      </div>
+
+      <div class="abr-filter-group" :class="{ 'has-value': f.archer }">
+        <label x-text="t.archer"></label>
+        <input type="text" x-model="f.archer" :placeholder="t.searchArcher"
+               @input="onSuggestInput('archer')"
+               @focus="onSuggestInput('archer')"
+               @keydown="onSuggestKeydown($event, 'archer')"
+               @blur="setTimeout(() => closeSuggest(), 150)" />
+        <button class="abr-clear-btn" x-show="f.archer" @click="clearFilter('archer')" title="Clear">✕</button>
+        <span class="abr-filter-icon" x-show="!f.archer">🔍</span>
+        <div class="abr-suggest" x-show="suggest.field === 'archer' && suggest.items.length">
+          <template x-for="(item, i) in suggest.items" :key="item">
+            <div class="abr-suggest-item" :class="{ 'is-active': suggest.idx === i }"
+                 @mousedown.prevent="pickSuggest('archer', item)" x-text="item"></div>
+          </template>
+        </div>
+      </div>
+
+      <div class="abr-filter-group" :class="{ 'has-value': f.club }">
+        <label x-text="t.club"></label>
+        <input type="text" x-model="f.club" :placeholder="t.searchClub"
+               @input="onSuggestInput('club')"
+               @focus="onSuggestInput('club')"
+               @keydown="onSuggestKeydown($event, 'club')"
+               @blur="setTimeout(() => closeSuggest(), 150)" />
+        <button class="abr-clear-btn" x-show="f.club" @click="clearFilter('club')" title="Clear">✕</button>
+        <span class="abr-filter-icon" x-show="!f.club">🔍</span>
+        <div class="abr-suggest" x-show="suggest.field === 'club' && suggest.items.length">
+          <template x-for="(item, i) in suggest.items" :key="item">
+            <div class="abr-suggest-item" :class="{ 'is-active': suggest.idx === i }"
+                 @mousedown.prevent="pickSuggest('club', item)" x-text="item"></div>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- year -->
+    <div class="abr-filter-row">
+      <div class="abr-filter-group narrow is-select" :class="{ 'has-value': f.date }">
+        <label x-text="t.date"></label>
+        <select x-model="f.date">
+          <option value="" x-text="t.allYears"></option>
+          <template x-for="yr in yearOptions" :key="yr">
+            <option :value="yr" x-text="yr"></option>
+          </template>
+        </select>
+        <button class="abr-clear-btn" x-show="f.date" @click.stop="clearFilter('date')" title="Clear">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="abr-stats" x-show="!loading && !error">
+    <span class="abr-stats-count">
+      <strong x-text="filtered.length"></strong>
+      <span x-text="' ' + t.records + ' ' + t.shown"></span>
+      <template x-if="filtered.length !== records.length">
+        <span x-text="' / ' + records.length + ' ' + t.records"></span>
+      </template>
+    </span>
+    <button class="abr-clear-all" x-show="hasActiveFilters" @click="clearAll()">✕ Reset</button>
+  </div>
+
+  <div class="abr-loading" x-show="loading">
+    <div class="abr-spinner"></div>
+    <div x-text="t.loading"></div>
+  </div>
+
+  <div class="abr-error" x-show="!loading && error">
+    ⚠ <span x-text="t.error"></span>: <span x-text="error"></span>
+  </div>
+
+  <div class="abr-table-wrap" x-show="!loading && !error">
+    <table class="abr-table">
+      <thead>
+        <tr>
+          <th x-show="hasDivisions"
+              class="sortable" :class="{ 'sort-active': sortCol === 'division' }"
+              @click="setSort('division')">
+            <span x-text="t.division"></span>
+            <span class="sort-icon" x-text="sortCol === 'division' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'"></span>
+          </th>
+          <th class="sortable" :class="{ 'sort-active': sortCol === 'recordType' }"
+              @click="setSort('recordType')">
+            <span x-text="t.recordType"></span>
+            <span class="sort-icon" x-text="sortCol === 'recordType' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'"></span>
+          </th>
+          <th class="sortable" :class="{ 'sort-active': sortCol === 'archer' }"
+              @click="setSort('archer')">
+            <span x-text="t.archer"></span>
+            <span class="sort-icon" x-text="sortCol === 'archer' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'"></span>
+          </th>
+          <th class="sortable" :class="{ 'sort-active': sortCol === 'club' }"
+              @click="setSort('club')">
+            <span x-text="t.club"></span>
+            <span class="sort-icon" x-text="sortCol === 'club' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'"></span>
+          </th>
+          <th class="sortable" :class="{ 'sort-active': sortCol === 'points' }"
+              @click="setSort('points')" style="text-align:right">
+            <span x-text="t.points"></span>
+            <span class="sort-icon" x-text="sortCol === 'points' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'"></span>
+          </th>
+          <th class="sortable" :class="{ 'sort-active': sortCol === 'date' }"
+              @click="setSort('date')">
+            <span x-text="t.date"></span>
+            <span class="sort-icon" x-text="sortCol === 'date' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'"></span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-if="filtered.length === 0 && !loading">
+          <tr>
+            <td :colspan="hasDivisions ? 6 : 5">
+              <div class="abr-empty">
+                <span class="abr-empty-icon">🎯</span>
+                <span x-text="t.noResults"></span>
+              </div>
+            </td>
+          </tr>
+        </template>
+        <template x-for="(row, i) in filtered" :key="i">
+          <tr>
+            <td class="td-division" x-show="hasDivisions" x-text="row.division"></td>
+            <td x-text="row.recordType"></td>
+            <td x-text="row.archer"></td>
+            <td x-text="row.club"></td>
+            <td class="td-points" x-text="row.points !== null ? row.points : '—'"></td>
+            <td class="td-date" x-text="row.date"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- mobile cards -->
+  <div class="abr-cards" x-show="!loading && !error">
+    <template x-if="filtered.length === 0 && !loading">
+      <div class="abr-empty">
+        <span class="abr-empty-icon">🎯</span>
+        <span x-text="t.noResults"></span>
+      </div>
+    </template>
+    <template x-for="(row, i) in filtered" :key="i">
+      <div class="abr-card" :class="{ 'is-expanded': expanded[i] }" @click="toggleRow(i)">
+        <div class="abr-card-main">
+          <div class="abr-card-left">
+            <span class="abr-card-archer" x-text="row.archer"></span>
+            <span class="abr-card-type" x-text="row.recordType"></span>
+          </div>
+          <div class="abr-card-right">
+            <span class="abr-card-points" x-text="row.points !== null ? row.points : '—'"></span>
+            <span class="abr-card-chevron">›</span>
+          </div>
+        </div>
+        <div class="abr-card-division" x-show="hasDivisions" x-text="row.division"></div>
+        <div class="abr-card-detail">
+          <div class="abr-card-detail-row">
+            <span class="abr-card-detail-label" x-text="t.club"></span>
+            <span x-text="row.club"></span>
+          </div>
+          <div class="abr-card-detail-row">
+            <span class="abr-card-detail-label" x-text="t.date"></span>
+            <span x-text="row.date"></span>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <footer class="abr-footer" x-show="!loading && !error">
+    <span>
+      <span x-text="t.dataFrom"></span> ·
+      <span x-text="t.updated"></span>: <span x-text="lastUpdated"></span>
+    </span>
+    <span>© Todor Minakov · <a href="https://archery.bg" target="_blank" rel="noopener">archery.bg</a></span>
+  </footer>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
