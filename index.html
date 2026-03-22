@@ -110,10 +110,10 @@
       </div>
     </div>
 
-    <!-- year -->
-    <div class="abr-filter-row">
+    <!-- year + checkboxes -->
+    <div class="abr-filter-row abr-filter-row-checks">
       <div class="abr-filter-group narrow is-select" :class="{ 'has-value': f.date }">
-        <label x-text="t.date"></label>
+        <label x-text="t.year"></label>
         <select x-model="f.date">
           <option value="" x-text="t.allYears"></option>
           <template x-for="yr in yearOptions" :key="yr">
@@ -122,15 +122,24 @@
         </select>
         <button class="abr-clear-btn" x-show="f.date" @click.stop="clearFilter('date')" title="Clear">✕</button>
       </div>
+      <label class="abr-check-label" :class="{ 'is-active': f.onlyCurrentRecord }">
+        <input type="checkbox" x-model="f.onlyCurrentRecord" />
+        <span x-text="t.onlyCurrentRecord"></span>
+      </label>
+      <label class="abr-check-label" :class="{ 'is-active': f.onlyCurrentDiscipline }">
+        <input type="checkbox" x-model="f.onlyCurrentDiscipline" />
+        <span x-text="t.onlyCurrentDiscipline"></span>
+      </label>
     </div>
   </div>
 
   <div class="abr-stats" x-show="!loading && !error">
     <span class="abr-stats-count">
-      <strong x-text="filtered.length"></strong>
-      <span x-text="' ' + t.records + ' ' + t.shown"></span>
+      <template x-if="filtered.length === records.length">
+        <span><strong x-text="records.length"></strong><span x-text="' ' + t.records"></span></span>
+      </template>
       <template x-if="filtered.length !== records.length">
-        <span x-text="' / ' + records.length + ' ' + t.records"></span>
+        <span><strong x-text="filtered.length"></strong><span x-text="' ' + t.from + ' ' + records.length + ' ' + t.records"></span></span>
       </template>
     </span>
     <button class="abr-clear-all" x-show="hasActiveFilters" @click="clearAll()">✕ Reset</button>

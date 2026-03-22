@@ -1,5 +1,5 @@
 const SHEET_ID = '1_eutPpUeEWZG_3F8bPjPyqxy8wufu_mM';
-const SHEET_GID = '2023701082';
+const SHEET_GID = '1898570785';
 const GVIZ_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${SHEET_GID}`;
 const XLSX_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=xlsx&gid=${SHEET_GID}`;
 
@@ -14,6 +14,7 @@ const translations = {
     club: 'Клуб',
     points: 'Точки',
     date: 'Дата',
+    year: 'Година',
     allSeasons: 'Всички сезони',
     allCategories: 'Всички категории',
     allDivisions: 'Всички дивизии',
@@ -27,7 +28,10 @@ const translations = {
     dataFrom: 'Данни от: Google Sheets',
     updated: 'Актуализирано',
     records: 'записа',
+    from: 'от',
     shown: 'показани',
+    onlyCurrentRecord: 'Само текущ рекорд',
+    onlyCurrentDiscipline: 'Само актуални дисциплини',
   },
   en: {
     title: 'BULGARIAN ARCHERY RECORDS',
@@ -39,6 +43,7 @@ const translations = {
     club: 'Club',
     points: 'Points',
     date: 'Date',
+    year: 'Year',
     allSeasons: 'All Seasons',
     allCategories: 'All Categories',
     allDivisions: 'All Divisions',
@@ -52,137 +57,109 @@ const translations = {
     dataFrom: 'Data from: Google Sheets',
     updated: 'Updated',
     records: 'records',
+    from: 'from',
     shown: 'shown',
+    onlyCurrentRecord: 'Current records only',
+    onlyCurrentDiscipline: 'Active disciplines only',
   }
 };
 
-// parse XLSX — reads merged-cell division labels via SheetJS
+// builds the category label from Възрастова Група + Индивидуално/Отборно
+function buildCategory(ageGroup, indivTeam) {
+  const it = indivTeam.toLowerCase();
+  if (it === 'индивидуално' || !it) return ageGroup;
+  // "Смесен отбор" and ageGroup already encodes it → no suffix
+  if (it === 'смесен отбор' && ageGroup.toLowerCase().includes('смесен отбор')) return ageGroup;
+  return ageGroup ? `${ageGroup} Отборно` : 'Отборно';
+}
+
+// parse XLSX — flat table, row 0 is header
 async function fetchRecordsFromXLSX() {
   const resp = await fetch(XLSX_URL, { redirect: 'follow' });
   if (!resp.ok) throw new Error(`XLSX HTTP ${resp.status}`);
   const ab = await resp.arrayBuffer();
   const wb = XLSX.read(ab, { type: 'array', cellDates: true });
-
-  // find the sheet by scanning for the "Актуали към:" metadata marker
-  let ws = null;
-  for (const name of wb.SheetNames) {
-    const s = wb.Sheets[name];
-    outer: for (let r = 0; r < 5; r++) {
-      for (let c = 0; c < 5; c++) {
-        const cell = s[XLSX.utils.encode_cell({ r, c })];
-        if (cell && typeof cell.v === 'string' && cell.v.includes('Актуал')) {
-          ws = s; break outer;
-        }
-      }
-    }
-    if (ws) break;
-  }
-  if (!ws) ws = wb.Sheets[wb.SheetNames[0]];
-
+  const ws = wb.Sheets[wb.SheetNames[0]];
   const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-  const merges = ws['!merges'] || [];
-
-  // division header rows are wide merges (≥3 cols); map each row index to its label
-  const divisionByRow = {};
-  for (const m of merges) {
-    const colSpan = m.e.c - m.s.c + 1;
-    if (colSpan < 3) continue;
-    const cell = ws[XLSX.utils.encode_cell({ r: m.s.r, c: m.s.c })];
-    if (!cell || typeof cell.v !== 'string' || !cell.v.trim()) continue;
-    const text = cell.v.trim();
-    if (text === 'Тип рекорд' || text === 'Стрелец' || text.startsWith('Актуал')) continue;
-    for (let r = m.s.r; r <= m.e.r; r++) divisionByRow[r] = text;
-  }
-
   const parsed = [];
-  let lastUpdated = '';
-  let currentDivision = '';
 
   for (let r = range.s.r; r <= range.e.r; r++) {
     const cell = c => ws[XLSX.utils.encode_cell({ r, c })];
     const strVal = c => { const x = cell(c); return x ? String(x.v ?? '').trim() : ''; };
 
-    if (divisionByRow[r] !== undefined) {
-      currentDivision = divisionByRow[r];
-      continue;
-    }
+    const recordType = strVal(0);
+    if (!recordType || recordType === 'Тип рекорд') continue;  // header or blank
 
-    const bVal = strVal(1);
-    if (bVal.includes('Актуал')) { lastUpdated = strVal(2); continue; }
-    if (bVal === 'Тип рекорд') continue;
+    const style     = strVal(1);
+    const discip    = strVal(2);
+    const ageGroup  = strVal(3);
+    const indivTeam = strVal(4);
+    const pCell     = cell(5);
+    const points    = pCell ? Number(pCell.v) : null;
+    const archer    = strVal(9);
+    const club      = strVal(10);
+    if (!archer) continue;
 
-    const aCell = cell(0);
-    if (!aCell || aCell.v === null || aCell.v === undefined) continue;
-    if (typeof aCell.v !== 'number') continue;
-
-    const recordType = bVal;
-    const archer = strVal(2);
-    const club = strVal(3);
-    const eCell = cell(4);
-    const points = eCell ? Number(eCell.v) : null;
-
-    const fCell = cell(5);
+    const dCell = cell(11);
     let date = '';
-    if (fCell) {
-      if (fCell.t === 'd' && fCell.v instanceof Date) {
-        const d = fCell.v;
+    if (dCell) {
+      if (dCell.t === 'd' && dCell.v instanceof Date) {
+        const d = dCell.v;
         date = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
-      } else if (fCell.w) {
-        date = fCell.w;
+      } else if (dCell.w) {
+        date = dCell.w;
       } else {
-        date = String(fCell.v ?? '');
+        date = String(dCell.v ?? '');
       }
     }
 
-    if (!archer || archer === 'Стрелец') continue;
-
-    const dp = currentDivision.split('/').map(s => s.trim());
-    parsed.push({ division: currentDivision, season: dp[0] || '', category: dp[1] || '', divisionPart: dp[2] || '', recordType, archer, club, points, date });
+    const activeDisc = strVal(7);
+    const currentRec = strVal(8);
+    const category = buildCategory(ageGroup, indivTeam);
+    const divAgeGroup = (indivTeam && indivTeam !== 'Индивидуално' && !(indivTeam.toLowerCase() === 'смесен отбор' && ageGroup.toLowerCase().includes('смесен отбор'))) ? `${ageGroup} ${indivTeam}` : ageGroup;
+    const division = [style, discip, divAgeGroup].filter(Boolean).join(' / ');
+    parsed.push({ division, season: discip, category, divisionPart: style, recordType, archer, club, points, date, activeDisc, currentRec });
   }
 
-  return { records: parsed, lastUpdated };
+  return { records: parsed, lastUpdated: '' };
 }
 
-// parse gviz JSON fallback (no division data)
+// parse gviz JSON fallback
 async function fetchRecordsFromGviz() {
   const resp = await fetch(GVIZ_URL);
   const text = await resp.text();
   const json = JSON.parse(text.replace(/^[^{]*/, '').replace(/[^}]*$/, ''));
-
   const rows = json.table.rows;
   const parsed = [];
-  let lastUpdated = '';
 
   for (const row of rows) {
     const cells = row.c || [];
-    const colA = cells[0];
-
-    if (colA === null || colA === undefined || colA.v === null || colA.v === undefined) {
-      const colB = cells[1];
-      if (colB && String(colB.v ?? '').includes('Актуал')) {
-        const colC = cells[2];
-        if (colC && colC.v) lastUpdated = String(colC.v).trim();
-      }
-      continue;
-    }
-
     const str = idx => { const c = cells[idx]; return (c && c.v != null) ? String(c.v).trim() : ''; };
     const fmt = idx => { const c = cells[idx]; if (!c) return ''; return c.f ?? (c.v != null ? String(c.v) : ''); };
 
-    const archer = str(2);
-    if (!archer || archer === 'Стрелец') continue;
+    const recordType = str(0);
+    if (!recordType || recordType === 'Тип рекорд') continue;
 
-    parsed.push({
-      division: '', season: '', category: '', divisionPart: '',
-      recordType: str(1),
-      archer,
-      club: str(3),
-      points: cells[4]?.v != null ? Number(cells[4].v) : null,
-      date: fmt(5),
-    });
+    const style     = str(1);
+    const discip    = str(2);
+    const ageGroup  = str(3);
+    const indivTeam = str(4);
+    const points    = cells[5]?.v != null ? Number(cells[5].v) : null;
+    const archer    = str(9);
+    const club      = str(10);
+    const date      = fmt(11);
+
+    if (!archer) continue;
+
+    const activeDisc = str(7);
+    const currentRec = str(8);
+    const category = buildCategory(ageGroup, indivTeam);
+    const divAgeGroup = (indivTeam && indivTeam !== 'Индивидуално' && !(indivTeam.toLowerCase() === 'смесен отбор' && ageGroup.toLowerCase().includes('смесен отбор'))) ? `${ageGroup} ${indivTeam}` : ageGroup;
+    const division = [style, discip, divAgeGroup].filter(Boolean).join(' / ');
+    parsed.push({ division, season: discip, category, divisionPart: style, recordType, archer, club, points, date, activeDisc, currentRec });
   }
 
-  return { records: parsed, lastUpdated };
+  return { records: parsed, lastUpdated: '' };
 }
 
 function archerApp() {
@@ -202,6 +179,8 @@ function archerApp() {
       archer: '',
       club: '',
       date: '',
+      onlyCurrentRecord: false,
+      onlyCurrentDiscipline: false,
     },
 
     suggest: { field: null, items: [], idx: -1 },
@@ -216,13 +195,15 @@ function archerApp() {
 
     get filtered() {
       let rows = this.records
-        .filter(r => !this.f.season       || r.season === this.f.season)
-        .filter(r => !this.f.category     || r.category === this.f.category)
-        .filter(r => !this.f.divisionPart || r.divisionPart === this.f.divisionPart)
-        .filter(r => !this.f.recordType   || r.recordType === this.f.recordType)
-        .filter(r => !this.f.archer       || r.archer.toLowerCase().includes(this.f.archer.toLowerCase()))
-        .filter(r => !this.f.club         || r.club.toLowerCase().includes(this.f.club.toLowerCase()))
-        .filter(r => !this.f.date         || r.date.includes(this.f.date));
+        .filter(r => !this.f.season                 || r.season === this.f.season)
+        .filter(r => !this.f.category               || r.category === this.f.category)
+        .filter(r => !this.f.divisionPart           || r.divisionPart === this.f.divisionPart)
+        .filter(r => !this.f.recordType             || r.recordType === this.f.recordType)
+        .filter(r => !this.f.archer                 || r.archer.toLowerCase().includes(this.f.archer.toLowerCase()))
+        .filter(r => !this.f.club                   || r.club.toLowerCase().includes(this.f.club.toLowerCase()))
+        .filter(r => !this.f.date                   || r.date.includes(this.f.date))
+        .filter(r => !this.f.onlyCurrentRecord      || r.currentRec === 'Текущ Рекорд')
+        .filter(r => !this.f.onlyCurrentDiscipline  || r.activeDisc === 'Актуална Дисциплина');
 
       if (this.sortCol) {
         rows = [...rows].sort((a, b) => {
@@ -247,9 +228,11 @@ function archerApp() {
       return this.records.filter(r =>
         Object.keys(this.f).every(k => {
           if (k === key || !this.f[k]) return true;
-          if (k === 'archer') return r.archer.toLowerCase().includes(this.f[k].toLowerCase());
-          if (k === 'club')   return r.club.toLowerCase().includes(this.f[k].toLowerCase());
-          if (k === 'date')   return r.date.includes(this.f[k]);
+          if (k === 'archer')                return r.archer.toLowerCase().includes(this.f[k].toLowerCase());
+          if (k === 'club')                  return r.club.toLowerCase().includes(this.f[k].toLowerCase());
+          if (k === 'date')                  return r.date.includes(this.f[k]);
+          if (k === 'onlyCurrentRecord')     return r.currentRec === 'Текущ Рекорд';
+          if (k === 'onlyCurrentDiscipline') return r.activeDisc === 'Актуална Дисциплина';
           return r[k] === this.f[k];
         })
       );
@@ -325,9 +308,9 @@ function archerApp() {
       this.suggest = { field: null, items: [], idx: -1 };
     },
 
-    clearFilter(key) { this.f[key] = ''; this.closeSuggest(); },
-    get hasActiveFilters() { return Object.values(this.f).some(v => v !== ''); },
-    clearAll() { Object.keys(this.f).forEach(k => this.f[k] = ''); this.closeSuggest(); this.expanded = {}; },
+    clearFilter(key) { this.f[key] = typeof this.f[key] === 'boolean' ? false : ''; this.closeSuggest(); },
+    get hasActiveFilters() { return Object.values(this.f).some(v => v !== '' && v !== false); },
+    clearAll() { Object.keys(this.f).forEach(k => this.f[k] = typeof this.f[k] === 'boolean' ? false : ''); this.closeSuggest(); this.expanded = {}; },
 
     async init() {
       try {
@@ -345,7 +328,7 @@ function archerApp() {
         const { records, lastUpdated } = await fetchRecordsFromGviz();
         this.records = records;
         this.lastUpdated = lastUpdated || new Date().toLocaleDateString('bg-BG');
-        this.hasDivisions = false;
+        this.hasDivisions = records.some(r => r.division);
       } catch (e) {
         this.error = e.message;
       } finally {
